@@ -57,7 +57,9 @@ class UpdateOfflineRepositoryTask extends DefaultTask
   void run()
   {
     //Delete the maven repository to ensure fresh start
-    GFileUtils.cleanDirectory(new File(getRoot()))
+    def libsDir = new File(getRoot())
+    if(libsDir.exists())
+      GFileUtils.cleanDirectory(libsDir)
 
     withRepositoryFiles { repositoryFiles ->
       // copy collected files to destination directory
