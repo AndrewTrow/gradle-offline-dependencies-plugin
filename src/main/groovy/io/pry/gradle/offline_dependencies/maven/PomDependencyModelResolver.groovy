@@ -8,66 +8,67 @@ import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.reso
 import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.resolution.ModelResolver
 import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.resolution.UnresolvableModelException
 import org.gradle.api.Project
+import org.gradle.api.internal.artifacts.DefaultModuleIdentifier
 import org.gradle.internal.component.external.model.DefaultModuleComponentIdentifier
 import org.gradle.maven.MavenModule
 import org.gradle.maven.MavenPomArtifact
 
 class PomDependencyModelResolver implements ModelResolver {
 
-  private Project project
-  private Map<String, FileModelSource> pomCache = [:]
-  private Map<DefaultModuleComponentIdentifier, File> componentCache = [:]
+    private Project project
+    private Map<String, FileModelSource> pomCache = [:]
+    private Map<DefaultModuleComponentIdentifier, File> componentCache = [:]
 
-  public PomDependencyModelResolver(Project project) {
-    this.project = project
-  }
-
-  @Override
-  ModelSource resolveModel(Parent parent) throws UnresolvableModelException {
-    return resolveModel(parent.groupId, parent.artifactId, parent.version)
-  }
-
-  @Override
-  ModelSource resolveModel(String groupId, String artifactId, String version) throws UnresolvableModelException {
-    def id = "$groupId:$artifactId:$version"
-
-    if (!pomCache.containsKey(id)) {
-      def mavenArtifacts = project.dependencies.createArtifactResolutionQuery()
-          .forComponents(new DefaultModuleComponentIdentifier(groupId, artifactId, version))
-          .withArtifacts(MavenModule, MavenPomArtifact)
-          .execute()
-
-      def component = mavenArtifacts.resolvedComponents.first()
-
-      def poms = component.getArtifacts(MavenPomArtifact)
-      if (poms?.empty) {
-        return null
-      }
-
-      def pomFile = poms.first().file as File
-
-      def componentId = new DefaultModuleComponentIdentifier(groupId, artifactId, version)
-      componentCache[componentId] = pomFile
-
-      def pom = new FileModelSource(pomFile)
-      pomCache[id] = pom
-      return pom
+    public PomDependencyModelResolver(Project project) {
+        this.project = project
     }
 
+    @Override
+    ModelSource resolveModel(Parent parent) throws UnresolvableModelException {
+        return resolveModel(parent.groupId, parent.artifactId, parent.version)
+    }
 
-    return pomCache[id]
-  }
+    @Override
+    ModelSource resolveModel(String groupId, String artifactId, String version) throws UnresolvableModelException {
+        def id = "$groupId:$artifactId:$version"
 
-  @Override
-  void addRepository(Repository repository, boolean replace) throws InvalidRepositoryException {}
+        if (!pomCache.containsKey(id)) {
+            def mavenArtifacts = project.dependencies.createArtifactResolutionQuery()
+                    .forComponents(new DefaultModuleComponentIdentifier(DefaultModuleIdentifier.newId(groupId, artifactId), version))
+                    .withArtifacts(MavenModule, MavenPomArtifact)
+                    .execute()
 
-  @Override
-  void addRepository(Repository repository) throws InvalidRepositoryException {}
+            def component = mavenArtifacts.resolvedComponents.first()
 
-  @Override
-  ModelResolver newCopy() { return this }
+            def poms = component.getArtifacts(MavenPomArtifact)
+            if (poms?.empty) {
+                return null
+            }
 
-  public componentCache() {
-    return this.componentCache
-  }
+            def pomFile = poms.first().file as File
+
+            def componentId = new DefaultModuleComponentIdentifier(DefaultModuleIdentifier.newId(groupId, artifactId), version)
+            componentCache[componentId] = pomFile
+
+            def pom = new FileModelSource(pomFile)
+            pomCache[id] = pom
+            return pom
+        }
+
+
+        return pomCache[id]
+    }
+
+    @Override
+    void addRepository(Repository repository, boolean replace) throws InvalidRepositoryException {}
+
+    @Override
+    void addRepository(Repository repository) throws InvalidRepositoryException {}
+
+    @Override
+    ModelResolver newCopy() { return this }
+
+    public componentCache() {
+        return this.componentCache
+    }
 }
