@@ -1,3 +1,9 @@
+plugins {
+	id 'java-gradle-plugin'
+	id 'com.gradle.plugin-publish' version '0.10.0'
+	id "nu.studer.credentials" version "1.0.7"
+}
+
 apply plugin: 'groovy'
 
 group = 'gov.chesapeaketechnology'
@@ -53,6 +59,23 @@ task repackageDependencies(type: Jar) {
 }
 
 compileJava.dependsOn 'repackageDependencies'
+
+pluginBundle {
+	website = 'http://ctic-inc.com/'
+	vcsUrl = 'https://github.com/chesapeaketechnology/gradle-offline-dependencies-plugin'
+	tags = ['offline', 'offline dependencies', 'offline build', 'CTI']
+}
+
+gradlePlugin {
+	plugins {
+		offlineDependenciesPlugin {
+			id = "${project.group}.offline-dependencies"
+			displayName = 'Offline Dependencies'
+			description = 'Provides tasks to enable building in and deploying to offline environments'
+			implementationClass = 'io.pry.gradle.offline_dependencies.OfflineDependenciesPlugin'
+		}
+	}
+}
 
 jar {
 	from(zipTree(repackageDependencies.archivePath)) {
