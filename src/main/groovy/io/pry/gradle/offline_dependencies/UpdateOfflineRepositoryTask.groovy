@@ -8,16 +8,15 @@ import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.path
 import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.path.DefaultUrlNormalizer
 import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.validation.DefaultModelValidator
 import org.gradle.api.DefaultTask
-import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.ExternalModuleDependency
 import org.gradle.api.artifacts.UnknownConfigurationException
 import org.gradle.api.artifacts.component.ComponentIdentifier
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.result.UnresolvedArtifactResult
 import org.gradle.api.internal.artifacts.DefaultModuleIdentifier
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import org.gradle.internal.component.external.model.DefaultModuleComponentIdentifier
 import org.gradle.ivy.IvyDescriptorArtifact
@@ -34,9 +33,8 @@ import static io.pry.gradle.offline_dependencies.Utils.addToMultimap
 class UpdateOfflineRepositoryTask extends DefaultTask {
 
     def EMPTY_DEPENDENCIES_ARRAY = new Dependency[0]
-    Map<ModuleComponentIdentifier, Set<File>> files = null
+
     @Input
-    @OutputDirectory
     GString root
     @Input
     Set<String> configurationNames
@@ -55,41 +53,15 @@ class UpdateOfflineRepositoryTask extends DefaultTask {
 
     @TaskAction
     void run() {
-        //Delete the maven repository to ensure fresh start
-        def libsDir = new File(getRoot())
-        if (libsDir.exists())
-            GFileUtils.cleanDirectory(libsDir)
-
         withRepositoryFiles { repositoryFiles ->
             // copy collected files to destination directory
             repositoryFiles.each { id, files ->
                 def directory = moduleDirectory(id)
                 GFileUtils.mkdirs(directory)
-                files.each { File file ->
-                    logger.info("Copying dependency: {} to {} with name {}", file, directory, file.name)
-                    GFileUtils.copyFile(file, new File(directory, file.name))
-                }
+                files.each { File file -> GFileUtils.copyFile(file, new File(directory, file.name)) }
             }
         }
     }
-
-//  @InputFiles
-//  Set<File> getInputFiles() {
-//    withRepositoryFiles { it.values().collect().flatten() as Set<File> }
-//  }
-//
-//  @OutputFiles
-//  Set<File> getOutputFiles() {
-//    withRepositoryFiles { repositoryFiles ->
-//      def outputFiles = [] as Set<File>
-//
-//      repositoryFiles.each { id, files ->
-//        files.each { File file -> outputFiles.add(new File(moduleDirectory(id), file.name)) }
-//      }
-//
-//      return outputFiles
-//    }
-//  }
 
     // configurations
     private Set<Configuration> getConfigurations() {
@@ -109,7 +81,7 @@ class UpdateOfflineRepositoryTask extends DefaultTask {
             }
         } else {
             logger.trace("No project configurations specified, defaulting to all configurations")
-            configurations.addAll(project.allprojects.collectMany { Project proj -> proj.configurations })
+            configurations.addAll(project.configurations)
         }
 
         if (this.getIncludeBuildscriptDependencies()) {
@@ -146,38 +118,24 @@ class UpdateOfflineRepositoryTask extends DefaultTask {
         Map<ModuleComponentIdentifier, Set<File>> repositoryFiles = [:]
 
         for (configuration in configurations) {
-            if (configuration.isCanBeResolved()) {
-                for (dependency in configuration.allDependencies) {
-                    if (dependency instanceof ExternalModuleDependency) {
+            for (dependency in configuration.allDependencies) {
+                if (dependency instanceof ExternalModuleDependency) {
 
-                        // create a detached configuration for each dependency to get all declared versions of a dependency.
-                        // resolution would fetch only the newest otherwise.
-                        //
-                        // see:
-                        // * http://stackoverflow.com/questions/29374885/multiple-version-of-dependencies-in-gradle
-                        // * https://discuss.gradle.org/t/how-to-get-multiple-versions-of-the-same-library/7400
-                        def cfg = project.rootProject.configurations.detachedConfiguration([dependency].toArray(EMPTY_DEPENDENCIES_ARRAY))
+                    // create a detached configuration for each dependency to get all declared versions of a dependency.
+                    // resolution would fetch only the newest otherwise.
+                    //
+                    // see:
+                    // * http://stackoverflow.com/questions/29374885/multiple-version-of-dependencies-in-gradle
+                    // * https://discuss.gradle.org/t/how-to-get-multiple-versions-of-the-same-library/7400
+                    def cfg = project.configurations.detachedConfiguration([dependency].toArray(EMPTY_DEPENDENCIES_ARRAY))
 
-                        def componentIdsResolved = configuration.incoming.resolutionResult.allDependencies.collect {
-                            it.selected.id
-                        }
+                    cfg.resolvedConfiguration.resolvedArtifacts.forEach({ artifact ->
+                        def componentId = DefaultModuleComponentIdentifier.newId(DefaultModuleIdentifier.newId(artifact.moduleVersion.id.group, artifact.moduleVersion.id.name), artifact.moduleVersion.id.version)
 
-                        cfg.resolvedConfiguration.resolvedArtifacts.forEach({ artifact ->
-                            def componentId =
-                                    new DefaultModuleComponentIdentifier(
-                                            DefaultModuleIdentifier.newId(
-                                                    artifact.moduleVersion.id.group,
-                                                    artifact.moduleVersion.id.name)
-                                            ,
-                                            artifact.moduleVersion.id.version
-                                    )
-
-                            componentIds.add(componentId)
-                            logger.trace("Adding artifact for component'{}' (location '{}')", componentId, artifact.file)
-                            addToMultimap(repositoryFiles, componentId, artifact.file)
-                        });
-
-                    }
+                        componentIds.add(componentId)
+                        logger.trace("Adding artifact for component'{}' (location '{}')", componentId, artifact.file)
+                        addToMultimap(repositoryFiles, componentId, artifact.file)
+                    });
                 }
             }
         }
@@ -241,7 +199,14 @@ class UpdateOfflineRepositoryTask extends DefaultTask {
                 continue
             }
 
-            def pomFile = poms.first().file as File
+            def pomArtifact = poms.first()
+
+            if (pomArtifact instanceof UnresolvedArtifactResult) {
+                logger.error("Resolver was unable to resolve artifact '{}'", pomArtifact.id, pomArtifact.getFailure())
+                continue
+            }
+
+            def pomFile = pomArtifact.file as File
             resolvePom(pomModelResolver, pomFile)
 
             logger.trace("Adding pom for component'{}' (location '{}')", component.id, pomFile)
@@ -311,7 +276,14 @@ class UpdateOfflineRepositoryTask extends DefaultTask {
                 continue
             }
 
-            def ivyXml = ivyXmls.first().file as File
+            def ivyXmlArtifact = ivyXmls.first()
+
+            if (ivyXmlArtifact instanceof UnresolvedArtifactResult) {
+                logger.error("Resolver was unable to resolve artifact '{}'", ivyXmlArtifact.id, ivyXmlArtifact.getFailure())
+                continue
+            }
+
+            def ivyXml = ivyXmlArtifact.file as File
             logger.trace("Adding ivy artifact for component'{}' (location '{}')", component.id, ivyXml)
             addToMultimap(repositoryFiles, component.id, ivyXml)
         }
@@ -320,28 +292,19 @@ class UpdateOfflineRepositoryTask extends DefaultTask {
     // Activate online repositories and collect dependencies.
     // Switch back to local repository afterwards.
     private def withRepositoryFiles(Closure<Map<ModuleComponentIdentifier, Set<File>>> callback) {
-        def originalRepositories = project.repositories.asImmutable()
+        def originalRepositories = project.repositories.collect()
 
-        // add all the repos for the top level project and all sub projects
-        project.repositories.addAll(project.allprojects.collectMany { Project proj -> (proj.repositories + proj.buildscript.repositories) })
+        OfflineDependenciesExtension extension =
+                project.extensions.getByName(OfflineDependenciesPlugin.EXTENSION_NAME) as OfflineDependenciesExtension
 
-        // remove duplicates
-        project.repositories.unique(true)
+        project.repositories.addAll(extension.repositoryHandler)
 
+        def files = collectRepositoryFiles(getConfigurations())
 
-        try {
-            //only should run once.
-            if (files == null) {
-                files = (collectRepositoryFiles(getConfigurations()))
-            }
-            // do the work
-            callback(files)
+        project.repositories.clear()
+        project.repositories.addAll(originalRepositories)
 
-        } finally {
-            // restore original set of repos
-            project.repositories.retainAll(originalRepositories)
-        }
-
+        callback(files)
     }
 
     // Return the offline-repository target directory for the given component (naming follows maven conventions)
