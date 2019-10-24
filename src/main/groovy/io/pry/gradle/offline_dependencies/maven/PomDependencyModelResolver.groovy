@@ -1,12 +1,15 @@
 package io.pry.gradle.offline_dependencies.maven
 
+import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.Dependency
 import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.Parent
 import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.Repository
 import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.building.FileModelSource
-import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.building.ModelSource
+import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.building.ModelSource2
 import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.resolution.InvalidRepositoryException
 import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.resolution.ModelResolver
 import io.pry.gradle.offline_dependencies.repackaged.org.apache.maven.model.resolution.UnresolvableModelException
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.result.UnresolvedArtifactResult
 import org.gradle.api.Project
 import org.gradle.api.internal.artifacts.DefaultModuleIdentifier
 import org.gradle.internal.component.external.model.DefaultModuleComponentIdentifier
@@ -17,24 +20,29 @@ class PomDependencyModelResolver implements ModelResolver {
 
     private Project project
     private Map<String, FileModelSource> pomCache = [:]
-    private Map<DefaultModuleComponentIdentifier, File> componentCache = [:]
+    private Map<ModuleComponentIdentifier, File> componentCache = [:]
 
-    public PomDependencyModelResolver(Project project) {
+    PomDependencyModelResolver(Project project) {
         this.project = project
     }
 
     @Override
-    ModelSource resolveModel(Parent parent) throws UnresolvableModelException {
+    ModelSource2 resolveModel(Parent parent) throws UnresolvableModelException {
         return resolveModel(parent.groupId, parent.artifactId, parent.version)
     }
 
     @Override
-    ModelSource resolveModel(String groupId, String artifactId, String version) throws UnresolvableModelException {
-        def id = "$groupId:$artifactId:$version"
+    ModelSource2 resolveModel(Dependency dependency) throws UnresolvableModelException {
+        return resolveModel(dependency.groupId, dependency.artifactId, dependency.version)
+    }
+
+    @Override
+    ModelSource2 resolveModel(String groupId, String artifactId, String version) throws UnresolvableModelException {
+        def id = "$groupId:$artifactId:$version".toString()
 
         if (!pomCache.containsKey(id)) {
             def mavenArtifacts = project.dependencies.createArtifactResolutionQuery()
-                    .forComponents(new DefaultModuleComponentIdentifier(DefaultModuleIdentifier.newId(groupId, artifactId), version))
+                    .forComponents(DefaultModuleComponentIdentifier.newId(DefaultModuleIdentifier.newId(groupId, artifactId), version))
                     .withArtifacts(MavenModule, MavenPomArtifact)
                     .execute()
 
@@ -45,9 +53,16 @@ class PomDependencyModelResolver implements ModelResolver {
                 return null
             }
 
-            def pomFile = poms.first().file as File
+            def pomArtifact = poms.first()
 
-            def componentId = new DefaultModuleComponentIdentifier(DefaultModuleIdentifier.newId(groupId, artifactId), version)
+            if (pomArtifact instanceof UnresolvedArtifactResult) {
+                logger.error("Resolver was unable to resolve artifact '{}'", pomArtifact.id, pomArtifact.getFailure())
+                return null
+            }
+
+            def pomFile = pomArtifact.file as File
+
+            def componentId = DefaultModuleComponentIdentifier.newId(DefaultModuleIdentifier.newId(groupId, artifactId), version)
             componentCache[componentId] = pomFile
 
             def pom = new FileModelSource(pomFile)
