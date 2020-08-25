@@ -31,7 +31,6 @@ class PomDependencyModelResolver implements ModelResolver {
         return resolveModel(parent.groupId, parent.artifactId, parent.version)
     }
 
-    @Override
     ModelSource2 resolveModel(Dependency dependency) throws UnresolvableModelException {
         return resolveModel(dependency.groupId, dependency.artifactId, dependency.version)
     }
